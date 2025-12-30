@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="咒術記帳">
+    <title>咒術記帳本 - 領域展開</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #0a0a0c; color: #e2e8f0; font-family: -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        .jujutsu-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(15px); border: 1px solid #334155; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+        .day-card { min-height: 70px; border: 1px solid #1e293b; position: relative; }
+        .income-text { color: #4ade80; }
+        .expense-text { color: #f87171; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); align-items: center; justify-content: center; z-index: 100; padding: 15px; }
+        .modal.active { display: flex; }
+        .domain-border { border: 2px solid #6366f1; box-shadow: 0 0 20px rgba(99, 102, 241, 0.4); }
+    </style>
+</head>
+<body class="p-2 pb-10">
+
+    <div class="max-w-md mx-auto min-h-screen flex flex-col">
+        <div class="jujutsu-card rounded-3xl p-6 mb-4 domain-border mt-8">
+            <div class="flex justify-between items-center mb-6">
+                <button onclick="changeMonth(-1)" class="text-indigo-400 p-2">❮</button>
+                <h1 id="currentMonthDisplay" class="text-xl font-bold text-white tracking-widest">2025年 12月</h1>
+                <button onclick="changeMonth(1)" class="text-indigo-400 p-2">❯</button>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4 text-center">
+                <div><p class="text-[10px] text-indigo-300">總咒力流入</p><div id="monthlyIn" class="text-lg font-bold income-text">+$0</div></div>
+                <div><p class="text-[10px] text-indigo-300">總咒力消耗</p><div id="monthlyOut" class="text-lg font-bold expense-text">-$0</div></div>
+            </div>
+            
+            <div class="mt-6 text-center border-t border-slate-700 pt-4">
+                <p class="text-xs text-slate-400">當前領域餘額</p>
+                <div id="remainingBalance" class="text-4xl font-black text-white">$ 0</div>
+            </div>
+        </div>
+
+        <div class="jujutsu-card rounded-2xl p-2 flex-1 shadow-inner">
+            <div class="calendar-grid text-center text-xs font-bold text-indigo-400 my-2">
+                <div>日</div><div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div>
+            </div>
+            <div id="calendarDays" class="calendar-grid gap-1"></div>
+        </div>
+    </div>
+
+    <div id="detailModal" class="modal">
+        <div class="jujutsu-card w-full max-w-sm rounded-3xl overflow-hidden border-2 border-indigo-500">
+            <div class="p-4 bg-slate-900 flex justify-between items-center border-b border-indigo-900">
+                <h2 id="selectedDateText" class="font-bold text-indigo-300">日期</h2>
+                <button onclick="closeModal()" class="text-slate-500 text-2xl p-2">✕</button>
+            </div>
+            
+            <div class="p-5">
+                <div class="flex bg-slate-800 rounded-xl p-1 mb-4">
+                    <button id="typeExp" onclick="setType('expense')" class="flex-1 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white">支出</button>
+                    <button id="typeInc" onclick="setType('income')" class="flex-1 py-2 rounded-lg text-sm font-bold text-slate-400">收入</button>
+                </div>
+
+                <div class="space-y-3">
+                    <div class="flex gap-2">
+                        <select id="category" class="bg-slate-800 rounded-xl p-2 text-sm text-white outline-none w-24"></select>
+                        <input type="text" id="itemName" placeholder="描述" class="flex-1 bg-slate-800 rounded-xl p-2 text-sm text-white outline-none">
+                    </div>
+                    <input type="number" id="amount" placeholder="金額" class="w-full bg-slate-800 rounded-xl p-3 text-xl font-bold text-white outline-none">
+                    
+                    <input type="hidden" id="editIndex" value="-1">
+                    <button id="submitBtn" onclick="addOrUpdateRecord()" class="w-full bg-indigo-500 text-white py-3 rounded-xl font-black">確 定 錄 入</button>
+                    <button id="cancelEditBtn" onclick="resetForm()" class="hidden w-full text-slate-500 text-xs py-1">取消編輯模式</button>
+                </div>
+            </div>
+
+            <div id="dayList" class="p-5 max-h-52 overflow-y-auto divide-y divide-slate-700"></div>
+        </div>
+    </div>
+
+    <script>
+        let db = JSON.parse(localStorage.getItem('jujutsu_db')) || {};
+        let viewDate = new Date();
+        let selectedDateKey = "";
+        let currentType = 'expense';
+
+        const categories = {
+            expense: ["飲食", "交通", "購物", "娛樂", "醫療", "其他"],
+            income: ["薪水", "獎金", "投資", "外快", "紅包", "其他"]
+        };
+
+        function setType(type) {
+            currentType = type;
+            document.getElementById('typeExp').className = `flex-1 py-2 rounded-lg text-sm font-bold ${type === 'expense' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`;
+            document.getElementById('typeInc').className = `flex-1 py-2 rounded-lg text-sm font-bold ${type === 'income' ? 'bg-green-600 text-white' : 'text-slate-400'}`;
+            const catSelect = document.getElementById('category');
+            catSelect.innerHTML = categories[type].map(c => `<option value="${c}">${c}</option>`).join('');
+        }
+
+        function changeMonth(offset) {
+            viewDate.setMonth(viewDate.getMonth() + offset);
+            render();
+        }
+
+        function render() {
+            const year = viewDate.getFullYear();
+            const month = viewDate.getMonth();
+            document.getElementById('currentMonthDisplay').innerText = `${year}年 ${month + 1}月`;
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const container = document.getElementById('calendarDays');
+            container.innerHTML = '';
+            let mIn = 0, mOut = 0;
+            for (let i = 0; i < firstDay; i++) container.innerHTML += `<div class="day-card border-none"></div>`;
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                const data = db[dateStr] || [];
+                const dIn = data.filter(i => i.type === 'income').reduce((s, i) => s + i.amount, 0);
+                const dOut = data.filter(i => i.type === 'expense').reduce((s, i) => s + i.amount, 0);
+                mIn += dIn; mOut += dOut;
+                container.innerHTML += `<div onclick="openModal('${dateStr}')" class="day-card p-1">
+                    <div class="text-[10px] text-slate-500">${d}</div>
+                    <div class="text-[9px] font-bold income-text ${dIn > 0 ? '' : 'hidden'}">+$${dIn}</div>
+                    <div class="text-[9px] font-bold expense-text ${dOut > 0 ? '' : 'hidden'}">-$${dOut}</div>
+                </div>`;
+            }
+            document.getElementById('monthlyIn').innerText = `+$${mIn.toLocaleString()}`;
+            document.getElementById('monthlyOut').innerText = `-$${mOut.toLocaleString()}`;
+            const bal = mIn - mOut;
+            document.getElementById('remainingBalance').innerText = `$ ${bal.toLocaleString()}`;
+            document.getElementById('remainingBalance').className = bal < 0 ? "text-4xl font-black expense-text" : "text-4xl font-black text-white";
+        }
+
+        function openModal(date) {
+            selectedDateKey = date;
+            document.getElementById('selectedDateText').innerText = date;
+            document.getElementById('detailModal').classList.add('active');
+            resetForm();
+            renderDayList();
+        }
+
+        function closeModal() {
+            document.getElementById('detailModal').classList.remove('active');
+            render();
+        }
+
+        function renderDayList() {
+            const list = document.getElementById('dayList');
+            const data = db[selectedDateKey] || [];
+            list.innerHTML = data.length ? '' : '<p class="text-center text-slate-500 py-4 text-xs">尚無紀錄</p>';
+            data.forEach((item, i) => {
+                const color = item.type === 'income' ? 'income-text' : 'expense-text';
+                list.innerHTML += `<div class="flex justify-between items-center py-3" onclick="startEdit(${i})">
+                    <div class="text-xs">
+                        <span class="text-indigo-400 font-bold">[${item.category}]</span>
+                        <span class="ml-1 text-slate-300">${item.name}</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="font-bold ${color}">${item.type==='income'?'+':'-'}$${item.amount}</span>
+                        <button onclick="event.stopPropagation(); deleteRecord(${i})" class="text-slate-600 p-1">✕</button>
+                    </div>
+                </div>`;
+            });
+        }
+
+        function startEdit(index) {
+            const item = db[selectedDateKey][index];
+            setType(item.type);
+            document.getElementById('category').value = item.category;
+            document.getElementById('itemName').value = item.name;
+            document.getElementById('amount').value = item.amount;
+            document.getElementById('editIndex').value = index;
+            document.getElementById('submitBtn').innerText = "更 新 紀錄";
+            document.getElementById('cancelEditBtn').classList.remove('hidden');
+        }
+
+        function resetForm() {
+            document.getElementById('editIndex').value = "-1";
+            document.getElementById('itemName').value = "";
+            document.getElementById('amount').value = "";
+            document.getElementById('submitBtn').innerText = "確 定 錄 入";
+            document.getElementById('cancelEditBtn').classList.add('hidden');
+            setType('expense');
+        }
+
+        function addOrUpdateRecord() {
+            const name = document.getElementById('itemName').value || "未命名";
+            const amount = parseFloat(document.getElementById('amount').value);
+            const category = document.getElementById('category').value;
+            const editIndex = parseInt(document.getElementById('editIndex').value);
+            if (!amount) return;
+            if (!db[selectedDateKey]) db[selectedDateKey] = [];
+            
+            const newRecord = { type: currentType, category, name, amount };
+            if (editIndex > -1) {
+                db[selectedDateKey][editIndex] = newRecord;
+            } else {
+                db[selectedDateKey].push(newRecord);
+            }
+            save();
+            resetForm();
+            renderDayList();
+        }
+
+        function deleteRecord(i) {
+            db[selectedDateKey].splice(i, 1);
+            save();
+            renderDayList();
+        }
+
+        function save() { localStorage.setItem('jujutsu_db', JSON.stringify(db)); }
+        render();
+    </script>
+</body>
+</html>
